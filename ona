@@ -1,1 +1,102 @@
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
 
+// --- WiFi sarea ---
+const char* ssarea = "OLP";
+const char* pasahitza = "oteitzaLP";
+
+// --- ThingsBoard ---
+const char* mqtt_zerbitzaria = "eu.thingsboard.cloud";
+const char* tokena = "llN4fKavjAWAJc2cuztX";
+
+WiFiClient espBezeroa;
+PubSubClient bezeroa(espBezeroa);
+
+// --- Pinak ---
+int argiSentsorea = A0;
+int ledPin = D5;
+
+// --- Aldagaiak ---
+int argiBalioa = 0;
+int atalasea = 500;
+int motorBalioa = 0;
+bool ledEgoera = false;
+
+// --- MQTT berriz konektatu ---
+void berrizKonektatu() {
+  while (!bezeroa.connected()) {
+    Serial.print("ThingsBoard-era konektatzen...");
+
+    if (bezeroa.connect("ESP8266Gailua", tokena, NULL)) {
+      Serial.println("Konektatuta ✔");
+    } else {
+      Serial.print("Errorea, kodea: ");
+      Serial.print(bezeroa.state());
+      Serial.println(" - berriro saiatzen 5 segundotan");
+      delay(5000);
+    }
+  }
+}
+
+void setup() {
+  pinMode(ledPin, OUTPUT);
+  Serial.begin(9600);
+
+  Serial.println("WiFi-ra konektatzen...");
+  WiFi.begin(ssarea, pasahitza);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi konektatuta ✔");
+
+  bezeroa.setServer(mqtt_zerbitzaria, 1883);
+}
+
+void loop() {
+
+  if (!bezeroa.connected()) {
+    berrizKonektatu();
+  }
+  bezeroa.loop();
+
+  argiBalioa = analogRead(argiSentsorea);
+
+  // 0–100 eskala
+  motorBalioa = map(argiBalioa, 0, 1023, 0, 100);
+
+  // --- LED kontrola ---
+  if (argiBalioa < atalasea) {
+    digitalWrite(ledPin, HIGH);
+    ledEgoera = true;
+  } else {
+    digitalWrite(ledPin, LOW);
+    ledEgoera = false;
+  }
+
+  // --- Serial Monitorea (euskaraz) ---
+  Serial.print("Argi maila (0-100): ");
+  Serial.println(motorBalioa);
+
+  if (ledEgoera) {
+    Serial.println("LED egoera: PIZTUTA 💡");
+  } else {
+    Serial.println("LED egoera: ITZALITA");
+  }
+
+  // --- ThingsBoard-era datuak bidali ---
+  String payload = "{";
+  payload += "\"argi_maila\":" + String(motorBalioa) + ",";
+  payload += "\"led_egoera\":" + String(ledEgoera);
+  payload += "}";
+
+  bezeroa.publish("v1/devices/me/telemetry", payload.c_str());
+
+  Serial.println("Datuak ThingsBoard-era bidalita ✔");
+  Serial.println("-------------------");
+
+  delay(2000);
+}
