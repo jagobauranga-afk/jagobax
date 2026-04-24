@@ -1,31 +1,110 @@
-#include <ESP8266WiFi.h> // WiFi library for ESP8266
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+#include <DHT.h>
+#include <Adafruit_Sensor.h>
 
-// WiFi  configuration
-const char* ssid = "5TALDEA";    // OLP
-const char* password = "SANJACOBO";   // oteitzaLP
+// --- KONFIGURAZIOA ---
+const char* ssid = "OLP";
+const char* password = "oteitzaLP";
+const char* mqtt_server = "thingsboard.cloud";
+const char* token = "i0AJkrm7MrPOiGnLysR7"; 
 
-// Funtzioak
-void setup_wifi() {
-  delay(10);
-  Serial.println();
-  Serial.print("Wifi-ra konektatzen: ");
-  Serial.println(ssid);
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+// PINAK
+#define DHTPIN D2   
+#define DHTTYPE DHT11
+#define LED1 D5
+#define LED2 D6
+#define LED3 D7
+#define BUZZER D1 
+
+DHT dht(DHTPIN, DHTTYPE);
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+int maila = 0;
+int aurrekoMaila = -1;
+
+void soinuAbisua(int kopurua) {
+  for (int i = 0; i < kopurua; i++) {
+    tone(BUZZER, 1000);
+    delay(150);
+    noTone(BUZZER);
+    delay(150);
   }
-  Serial.println("");
-  Serial.println("WiFira konektatua !!");
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
 }
 
 void setup() {
   Serial.begin(9600);
-  setup_wifi();
+  pinMode(LED1, OUTPUT);
+  pinMode(LED2, OUTPUT);
+  pinMode(LED3, OUTPUT);
+  pinMode(BUZZER, OUTPUT);
+  
+  dht.begin();
+  WiFi.begin(ssid, password);
+  client.setServer(mqtt_server, 1883);
 }
 
 void loop() {
-}
+  if (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    return;
+  }
+  if (!client.connected()) {
+    if (!client.connect("ESP8266_Gailua", token, NULL)) {
+      delay(5000);
+      return;
+    }
+  }
+  client.loop();
 
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+  
+  if (isnan(h) || isnan(t)) return;
+
+  // LED egoerak gordetzeko aldagaiak (0 = itzalita, 1 = piztuta)
+  int led1_status = 0, led2_status = 0, led3_status = 0;
+
+  if (t < 25) {
+    maila = 1;
+    digitalWrite(LED1, HIGH); led1_status = 1;
+    digitalWrite(LED2, LOW);
+    digitalWrite(LED3, LOW);
+  } else if (t < 30) {
+    maila = 2;
+    digitalWrite(LED1, LOW);
+    digitalWrite(LED2, HIGH); led2_status = 1;
+    digitalWrite(LED3, LOW);
+  } else if (t < 35) {
+    maila = 3;
+    digitalWrite(LED1, LOW);
+    digitalWrite(LED2, LOW);
+    digitalWrite(LED3, HIGH); led3_status = 1;
+  } else {
+    maila = 4;
+    digitalWrite(LED1, HIGH); led1_status = 1;
+    digitalWrite(LED2, HIGH); led2_status = 1;
+    digitalWrite(LED3, HIGH); led3_status = 1;
+  }
+
+  if (maila != aurrekoMaila) {
+    soinuAbisua(maila);
+    aurrekoMaila = maila;
+  }
+
+  // Payload-a LED egoerekin osatu
+  String payload = "{";
+  payload += "\"temperature\":" + String(t) + ",";
+  payload += "\"humidity\":" + String(h) + ",";
+  payload += "\"level\":" + String(maila) + ",";
+  payload += "\"led1_egoera\":" + String(led1_status) + ",";
+  payload += "\"led2_egoera\":" + String(led2_status) + ",";
+  payload += "\"led3_egoera\":" + String(led3_status);
+  payload += "}";
+
+  client.publish("v1/devices/me/telemetry", payload.c_str());
+  
+  Serial.println("Datuak bidalita: " + payload);
+  delay(1000);
+}
